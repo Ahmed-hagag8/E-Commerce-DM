@@ -1,0 +1,44 @@
+# Data files (too large for Git)
+data/raw/
+data/processed/
+data/generated/
+*.xlsx
+*.xls
+
+# Model files
+models/*.pkl
+models/*.h5
+models/*.joblib
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Environment
+.env
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Streamlit
+.streamlit/secrets.toml
