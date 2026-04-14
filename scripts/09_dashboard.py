@@ -18,7 +18,7 @@ import os
 # PAGE CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="E-Commerce Data Warehouse | AIE 323",
+    page_title="Customer Behavior Analysis And Hybrid Recommendation System",
     page_icon="🛒",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -102,8 +102,7 @@ DATA_DIR = BASE / 'data' / 'generated'
 # SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.markdown("## 🛒 E-Commerce DM")
-    st.markdown("**AIE 323 Project**")
+    st.markdown("# Customer Behavior Analysis And Hybrid Recommendation System")
     st.markdown("---")
 
     page = st.radio("Navigate", [
@@ -142,8 +141,7 @@ def metric_card(label, value, color=""):
 # PAGE: OVERVIEW
 # ============================================================
 if page == "📊 Overview":
-    st.markdown("# 🏪 E-Commerce Data Warehouse Dashboard")
-    st.markdown("*AIE 323 - Data Mining & Warehousing Project*")
+    st.markdown("# 🏪 Customer Behavior Analysis And Hybrid Recommendation System")
 
     # Key Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
