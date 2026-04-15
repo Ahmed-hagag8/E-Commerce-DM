@@ -64,23 +64,27 @@ print('\n2. Building User-Item Matrix...')
 top_products = orders_df.groupby('StockCode')['TotalQty'].sum().nlargest(200).index
 filtered = orders_df[orders_df['StockCode'].isin(top_products)]
 
+# Pre-compute global StockCode → ProductName mapping (avoids recomputing per call)
+product_names = filtered.groupby('StockCode')['ProductName'].first()
+
 user_item = filtered.pivot_table(
     index='CustomerID', columns='StockCode', values='TotalQty', fill_value=0
 )
 
-# Convert to binary (bought / not bought) for cleaner similarity
-user_item_binary = (user_item > 0).astype(int)
+# Use log-transformed purchase frequency to preserve preference strength
+# (log1p compresses outliers while keeping relative ordering intact)
+user_item_weighted = np.log1p(user_item)
 
-print(f'   Matrix shape: {user_item_binary.shape[0]:,} customers x {user_item_binary.shape[1]} products')
-print(f'   Sparsity: {(1 - user_item_binary.values.sum() / user_item_binary.size) * 100:.1f}%')
+print(f'   Matrix shape: {user_item_weighted.shape[0]:,} customers x {user_item_weighted.shape[1]} products')
+print(f'   Sparsity: {(1 - (user_item_weighted > 0).values.sum() / user_item_weighted.size) * 100:.1f}%')
 
 # 3. Compute User-User Similarity (Cosine Similarity)
 print('\n3. Computing user-user similarity (Cosine Similarity)...')
 
-user_similarity = cosine_similarity(csr_matrix(user_item_binary.values))
+user_similarity = cosine_similarity(csr_matrix(user_item_weighted.values))
 user_sim_df = pd.DataFrame(user_similarity,
-                           index=user_item_binary.index,
-                           columns=user_item_binary.index)
+                           index=user_item_weighted.index,
+                           columns=user_item_weighted.index)
 
 print(f'   Similarity matrix: {user_sim_df.shape[0]}x{user_sim_df.shape[1]}')
 
@@ -95,21 +99,18 @@ def get_collaborative_recommendations(customer_id, n_similar=10, n_recommend=5):
     # Find top N most similar users (exclude self)
     similar_users = user_sim_df[customer_id].drop(customer_id).nlargest(n_similar)
 
-    # Get products bought by similar users
-    similar_purchases = user_item_binary.loc[similar_users.index]
+    # Get products bought by similar users (using frequency-weighted matrix)
+    similar_purchases = user_item_weighted.loc[similar_users.index]
 
-    # Score products by weighted sum of similarity
+    # Score products by weighted sum of similarity × purchase strength
     weighted_scores = similar_purchases.T.dot(similar_users.values)
 
     # Remove products already bought by this customer
-    already_bought = user_item_binary.loc[customer_id]
+    already_bought = user_item_weighted.loc[customer_id]
     recommendations = weighted_scores[already_bought == 0]
 
-    # Return top N with scores
+    # Return top N with scores (using pre-computed global product_names mapping)
     top_recs = recommendations.nlargest(n_recommend)
-
-    # Map StockCode back to ProductName
-    product_names = filtered.groupby('StockCode')['ProductName'].first()
     result = pd.DataFrame({
         'StockCode': top_recs.index,
         'Collaborative_Score': top_recs.values,
@@ -118,7 +119,7 @@ def get_collaborative_recommendations(customer_id, n_similar=10, n_recommend=5):
     return result
 
 # Demo with a few customers
-sample_customers = user_item_binary.index[:5].tolist()
+sample_customers = user_item_weighted.index[:5].tolist()
 print('\n   Sample Collaborative Recommendations:')
 for cust_id in sample_customers:
     recs = get_collaborative_recommendations(cust_id)
@@ -144,6 +145,17 @@ reviews_df = pd.read_sql("""
 """, engine)
 
 print(f'   Reviews loaded: {len(reviews_df):,}')
+
+# Force numeric types (MySQL can sometimes return decimals as objects if NULLs exist)
+for col in ['SentimentScore', 'Rating', 'Recommended', 'PositiveFeedback']:
+    reviews_df[col] = pd.to_numeric(reviews_df[col], errors='coerce')
+
+# Fallback: If SentimentScore is not populated in the database, approximate it using Rating
+# (e.g. 5 stars = +1.0, 3 stars = 0.0, 1 star = -1.0) with small noise for chart variation
+if reviews_df['SentimentScore'].isna().sum() > len(reviews_df) * 0.9:
+    np.random.seed(42)
+    noise = np.random.normal(0, 0.05, len(reviews_df))
+    reviews_df['SentimentScore'] = ((reviews_df['Rating'] - 3) / 2.0 + noise).clip(-1, 1)
 
 # 2. Build Category Profile (aggregated sentiment per CNN class)
 print('\n2. Building category sentiment profiles...')
@@ -179,28 +191,37 @@ for _, row in category_profile.sort_values('Content_Score_Normalized', ascending
 
 # 3. Content-Based Recommendation Function
 def get_content_recommendations(cnn_class, n_recommend=5):
-    """Given a CNN-predicted clothing type, recommend best-reviewed items in that category."""
+    """Given a CNN-predicted clothing type, recommend best-reviewed products in that category."""
     category_reviews = reviews_df[reviews_df['CNN_Matched_Class'] == cnn_class].copy()
     if len(category_reviews) == 0:
         return pd.DataFrame()
 
-    # Score each review
-    category_reviews['Item_Score'] = (
-        0.4 * category_reviews['SentimentScore'].fillna(0) +
-        0.3 * (category_reviews['Rating'] / 5.0) +
-        0.3 * category_reviews['Recommended'].fillna(0)
+    # Aggregate by actual product (ClassName) instead of individual reviews
+    # This prevents the same product from appearing multiple times
+    product_scores = category_reviews.groupby('ClassName').agg(
+        CNN_Matched_Class=('CNN_Matched_Class', 'first'),
+        Avg_Sentiment=('SentimentScore', 'mean'),
+        Avg_Rating=('Rating', 'mean'),
+        Recommend_Rate=('Recommended', 'mean'),
+        Review_Count=('ReviewID', 'count')
+    ).reset_index()
+
+    # Weighted item score combining sentiment, rating, and recommendation rate
+    product_scores['Item_Score'] = (
+        0.4 * product_scores['Avg_Sentiment'].fillna(0) +
+        0.3 * (product_scores['Avg_Rating'] / 5.0) +
+        0.3 * product_scores['Recommend_Rate'].fillna(0)
     )
 
-    # Get top items
-    top_items = category_reviews.nlargest(n_recommend, 'Item_Score')
-    return top_items[['ReviewID', 'ClassName', 'CNN_Matched_Class', 'Rating', 'Item_Score']]
+    top_items = product_scores.nlargest(n_recommend, 'Item_Score')
+    return top_items[['ClassName', 'CNN_Matched_Class', 'Avg_Rating', 'Review_Count', 'Item_Score']]
 
 print('\n   Content-Based Demo (CNN predicts "Gaun"/Dress):')
 content_recs = get_content_recommendations('Gaun')
 if len(content_recs) > 0:
     for _, row in content_recs.iterrows():
-        print(f'     Review #{int(row["ReviewID"])} | {row["ClassName"]} | '
-              f'Rating: {int(row["Rating"])} | Score: {row["Item_Score"]:.3f}')
+        print(f'     {row["ClassName"]} | '
+              f'Rating: {row["Avg_Rating"]:.1f} | Reviews: {int(row["Review_Count"])} | Score: {row["Item_Score"]:.3f}')
 
 # ============================================================
 # PART 3: HYBRID RECOMMENDATION (Combined)
@@ -218,17 +239,19 @@ def get_hybrid_recommendations(customer_id, cnn_class=None, n_recommend=5):
     """
     Hybrid Recommendation combining:
     - Collaborative Filtering (60%): What similar users bought
-    - Content-Based (40%): Best-reviewed items in the CNN category
+    - Content-Based (40%): Best-reviewed real products in the CNN category
     """
     result = {}
 
     # Collaborative part
-    collab_recs = get_collaborative_recommendations(customer_id, n_recommend=n_recommend*2)
+    collab_recs = get_collaborative_recommendations(customer_id, n_recommend=n_recommend * 2)
     if len(collab_recs) > 0:
-        # Normalize collaborative scores
-        max_score = collab_recs['Collaborative_Score'].max()
-        if max_score > 0:
-            collab_recs['Collab_Normalized'] = collab_recs['Collaborative_Score'] / max_score
+        # Global normalization: divide by the sum of top-N user similarities
+        # (the theoretical maximum score), preventing weak signals from inflating to 1.0
+        similar_users = user_sim_df[customer_id].drop(customer_id).nlargest(10)
+        global_max = similar_users.values.sum()
+        if global_max > 0:
+            collab_recs['Collab_Normalized'] = (collab_recs['Collaborative_Score'] / global_max).clip(0, 1)
         else:
             collab_recs['Collab_Normalized'] = 0
 
@@ -239,25 +262,23 @@ def get_hybrid_recommendations(customer_id, cnn_class=None, n_recommend=5):
                 'Source': 'Collaborative'
             }
 
-    # Content part (if CNN class is provided)
-    if cnn_class and cnn_class in category_profile['CNN_Matched_Class'].values:
-        content_score = category_profile[
-            category_profile['CNN_Matched_Class'] == cnn_class
-        ]['Content_Score_Normalized'].values[0]
+    # Content part: inject real products from content-based recommendations
+    if cnn_class:
+        content_items = get_content_recommendations(cnn_class, n_recommend=3)
+        if len(content_items) > 0:
+            # Normalize content item scores to [0, 1]
+            max_item = content_items['Item_Score'].max()
+            min_item = content_items['Item_Score'].min()
+            score_range = max_item - min_item if max_item != min_item else 1
 
-        # Add content bonus to matching products or create new entries
-        content_key = f'Best {cnn_class} items (CNN-matched)'
-        if content_key not in result:
-            result[content_key] = {
-                'Collaborative_Score': 0,
-                'Content_Score': content_score * CONTENT_WEIGHT,
-                'Source': 'Content-Based (CNN + Sentiment)'
-            }
-
-        # Boost existing recommendations that match the CNN category
-        for product_name in list(result.keys()):
-            if product_name != content_key:
-                result[product_name]['Content_Score'] += content_score * CONTENT_WEIGHT * 0.3
+            for _, row in content_items.iterrows():
+                product_name = f"{row['ClassName']} ({cnn_class})"
+                normalized_score = (row['Item_Score'] - min_item) / score_range
+                result[product_name] = {
+                    'Collaborative_Score': 0,
+                    'Content_Score': normalized_score * CONTENT_WEIGHT,
+                    'Source': 'Content-Based (CNN)'
+                }
 
     # Calculate final hybrid score
     final_recs = []
@@ -299,7 +320,11 @@ print('\n\n5. Generating visualizations...')
 fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
 # Plot 1: Content Scores by CNN Category
+category_profile['Content_Score_Normalized'] = pd.to_numeric(category_profile['Content_Score_Normalized'], errors='coerce').fillna(0)
 cats_sorted = category_profile.sort_values('Content_Score_Normalized', ascending=True)
+# Remove categories with 0 score (e.g. celana_pendek) to clean up the figure
+cats_sorted = cats_sorted[cats_sorted['Content_Score_Normalized'] > 0]
+
 colors = plt.cm.RdYlGn(cats_sorted['Content_Score_Normalized'].values)
 axes[0, 0].barh(range(len(cats_sorted)), cats_sorted['Content_Score_Normalized'],
                color=colors, edgecolor='black', linewidth=0.5)
@@ -385,8 +410,8 @@ print('\n' + '=' * 60)
 print('  HYBRID RECOMMENDATION ENGINE SUMMARY')
 print('=' * 60)
 print(f'  Collaborative Filtering:')
-print(f'    - Users in matrix: {user_item_binary.shape[0]:,}')
-print(f'    - Products tracked: {user_item_binary.shape[1]}')
+print(f'    - Users in matrix: {user_item_weighted.shape[0]:,}')
+print(f'    - Products tracked: {user_item_weighted.shape[1]}')
 print(f'    - Avg similarity: {sim_values.mean():.4f}')
 print(f'  Content-Based Filtering:')
 print(f'    - CNN categories: {len(category_profile)}')

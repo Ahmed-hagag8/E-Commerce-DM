@@ -89,7 +89,7 @@ INSERT INTO Dim_Product (StockCode, ProductName, Category, AvgPrice, PriceRange)
 SELECT 
     StockCode,
     MAX(Description) AS ProductName,
-    ANY_VALUE(ProductCategory) AS Category,
+    MAX(ProductCategory) AS Category,  -- MAX is deterministic (vs ANY_VALUE which is random)
     ROUND(AVG(Price), 2) AS AvgPrice,
     CASE 
         WHEN AVG(Price) <= 2 THEN 'Low'

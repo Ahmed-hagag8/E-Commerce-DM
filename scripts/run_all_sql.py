@@ -57,8 +57,8 @@ for f in sql_files:
                     cols = [d[0] for d in cursor.description]
                     for row in rows:
                         results.append(dict(zip(cols, row)))
-            except:
-                pass
+            except Exception:
+                pass  # DDL statements (CREATE/DROP/ALTER) don't return result sets
             if not cursor.nextset():
                 break
         

@@ -28,7 +28,12 @@ ALTER TABLE rfm_table
 
 UPDATE rfm_table SET
     AvgOrderValue = ROUND(Monetary / Frequency, 2),
-    ChurnLabel = CASE WHEN Recency > 90 THEN 1 ELSE 0 END;
+    ChurnLabel = CASE 
+        WHEN Recency > 180 THEN 1
+        WHEN Recency > 90 AND Frequency <= 2 THEN 1
+        WHEN Recency > 60 AND Frequency = 1 AND Monetary < 100 THEN 1
+        ELSE 0 
+    END;
 
 SELECT 'RFM computed' AS Step, COUNT(*) AS Customers FROM rfm_table;
 SELECT 

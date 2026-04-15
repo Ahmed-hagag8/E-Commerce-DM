@@ -156,7 +156,7 @@ if page == "📊 Overview":
         with col2: metric_card("Products", f"{products:,}", "green")
         with col3: metric_card("Orders", f"{orders:,}", "orange")
         with col4: metric_card("Reviews", f"{reviews:,}", "purple")
-        with col5: metric_card("Revenue", f"${revenue:,.0f}" if revenue else "$0", "green")
+        with col5: metric_card("Revenue", f"${revenue/1_000_000:.1f}M" if revenue else "$0", "green")
     except:
         st.error("Could not load metrics from database")
 
@@ -193,9 +193,27 @@ if page == "📊 Overview":
                 FROM Fact_Orders fo JOIN Dim_Location dl ON fo.LocationID = dl.LocationID
                 GROUP BY dl.Region ORDER BY Revenue DESC
             """)
-            fig = px.pie(region_df, values='Revenue', names='Region',
-                         color_discrete_sequence=px.colors.qualitative.Set2)
-            fig.update_layout(template='plotly_dark', height=350, margin=dict(l=20, r=20, t=30, b=20))
+            region_df['Revenue_Label'] = region_df['Revenue'].apply(lambda x: f"${x:,.0f}")
+            region_df['Pct'] = (region_df['Revenue'] / region_df['Revenue'].sum() * 100).round(1)
+            region_df['Label'] = region_df['Revenue_Label'] + ' (' + region_df['Pct'].astype(str) + '%)'
+            region_sorted = region_df.sort_values('Revenue', ascending=True)
+
+            colors = ['#2d3748', '#4a5568', '#718096', '#a0aec0', '#ed8936', '#48bb78', '#4299e1']
+            fig = go.Figure(go.Bar(
+                x=region_sorted['Revenue'],
+                y=region_sorted['Region'],
+                orientation='h',
+                text=region_sorted['Label'],
+                textposition='auto',
+                marker_color=colors[:len(region_sorted)],
+                marker_line=dict(color='white', width=0.5)
+            ))
+            fig.update_layout(
+                template='plotly_dark', height=350,
+                margin=dict(l=20, r=20, t=30, b=20),
+                xaxis_title='Revenue ($)',
+                yaxis_title=''
+            )
             st.plotly_chart(fig, use_container_width=True)
         except Exception as e:
             st.error(f"Error: {e}")
@@ -440,7 +458,7 @@ elif page == "🤖 Churn Prediction":
                 fig.add_trace(go.Bar(name=metric, x=comparison['Model'], y=comparison[metric],
                                      marker_color=colors[i]))
             fig.update_layout(template='plotly_dark', barmode='group', height=400,
-                              yaxis_range=[0.9, 1.01], margin=dict(l=20, r=20, t=30, b=20))
+                              yaxis_range=[0, 1.0], margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
             # Comparison Table

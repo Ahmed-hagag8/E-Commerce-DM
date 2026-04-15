@@ -17,10 +17,14 @@ WHERE `Customer ID` IS NOT NULL
   AND Quantity > 0
   AND Price > 0;
 
--- Remove duplicates
+-- Remove duplicates using business keys (same invoice + product + customer + qty + price = duplicate)
+-- DISTINCT * is unreliable because timestamp differences can make true duplicates appear unique
 DROP TABLE IF EXISTS clean_retail_dedup;
 CREATE TABLE clean_retail_dedup AS
-SELECT DISTINCT * FROM clean_retail;
+SELECT Invoice, StockCode, MAX(Description) AS Description, Quantity,
+       MAX(InvoiceDate) AS InvoiceDate, Price, `Customer ID`, MAX(Country) AS Country
+FROM clean_retail
+GROUP BY Invoice, StockCode, `Customer ID`, Quantity, Price;
 DROP TABLE clean_retail;
 RENAME TABLE clean_retail_dedup TO clean_retail;
 

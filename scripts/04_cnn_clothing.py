@@ -21,62 +21,102 @@ OUTPUT_DIR = r'E:\Projects\E-Commerce DM\data\generated'
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-BATCH_SIZE = 64
-EPOCHS = 20  # Keeping it low for fast training demo
-IMG_SIZE = 64  # Resize images to 64x64 for speed
+BATCH_SIZE = 32  # Reduced for higher resolution images
+EPOCHS = 30
+IMG_SIZE = 128  # 128x128 preserves finer clothing details (vs 64x64)
 LEARNING_RATE = 0.001
+PATIENCE = 5  # Early stopping patience (epochs without improvement)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"🖥️ Using device: {device}")
 
 # 1. Data Loading & Preprocessing
 print("\n⏳ Loading dataset and applying transformations...")
-transform = transforms.Compose([
+
+# Separate transforms: augmentation for training, plain for validation/test
+train_transform = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomRotation(15),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+eval_transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
 try:
-    dataset = datasets.ImageFolder(root=DATA_DIR, transform=transform)
-    classes = dataset.classes
-    print(f"✅ Found {len(dataset)} images across {len(classes)} classes:")
+    # Load without transform (raw PIL images) so subsets can use different transforms
+    full_dataset = datasets.ImageFolder(root=DATA_DIR)
+    classes = full_dataset.classes
+    print(f"✅ Found {len(full_dataset)} images across {len(classes)} classes:")
     print("   " + ", ".join(classes))
 except Exception as e:
     print(f"❌ Error loading dataset: {e}")
     exit(1)
 
-# Split 80% train, 20% test
-train_size = int(0.8 * len(dataset))
-test_size = len(dataset) - train_size
-train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+# Wrapper to apply different transforms per subset
+class TransformedSubset(torch.utils.data.Dataset):
+    """Applies a specific transform to a subset of the dataset."""
+    def __init__(self, dataset, indices, transform):
+        self.dataset = dataset
+        self.indices = indices
+        self.transform = transform
+    def __getitem__(self, idx):
+        img, label = self.dataset[self.indices[idx]]
+        if self.transform:
+            img = self.transform(img)
+        return img, label
+    def __len__(self):
+        return len(self.indices)
+
+# Reproducible 70/15/15 split with fixed seed
+generator = torch.Generator().manual_seed(42)
+n = len(full_dataset)
+train_size = int(0.70 * n)
+val_size = int(0.15 * n)
+test_size = n - train_size - val_size
+
+indices = torch.randperm(n, generator=generator).tolist()
+train_dataset = TransformedSubset(full_dataset, indices[:train_size], train_transform)
+val_dataset = TransformedSubset(full_dataset, indices[train_size:train_size+val_size], eval_transform)
+test_dataset = TransformedSubset(full_dataset, indices[train_size+val_size:], eval_transform)
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-print(f"📦 Train set: {train_size} images | Test set: {test_size} images")
+print(f"📦 Train: {train_size} | Validation: {val_size} | Test: {test_size}")
 
-# 2. Build the CNN Model
+# 2. Build the CNN Model (with BatchNorm for stable training)
 class ClothingCNN(nn.Module):
     def __init__(self, num_classes):
         super(ClothingCNN, self).__init__()
-        # Input: 3 x 64 x 64
         self.features = nn.Sequential(
             nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.MaxPool2d(2), # 16 x 32 x 32
-            
+            nn.MaxPool2d(2),
+
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.MaxPool2d(2), # 32 x 16 x 16
-            
+            nn.MaxPool2d(2),
+
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2)  # 64 x 8 x 8
+            nn.MaxPool2d(2),
+
+            nn.AdaptiveAvgPool2d((4, 4))  # Output always 64x4x4 regardless of input resolution
         )
         self.classifier = nn.Sequential(
-            nn.Dropout(0.3),
-            nn.Linear(64 * 8 * 8, 128),
+            nn.Dropout(0.4),
+            nn.Linear(64 * 4 * 4, 128),
             nn.ReLU(),
             nn.Dropout(0.3),
             nn.Linear(128, num_classes)
@@ -91,36 +131,79 @@ class ClothingCNN(nn.Module):
 model = ClothingCNN(num_classes=len(classes)).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
-# 3. Training Loop
-print(f"\n🚀 Starting training for {EPOCHS} epochs...")
+# 3. Training Loop with Validation & Early Stopping
+print(f"\n🚀 Starting training for up to {EPOCHS} epochs (early stopping patience={PATIENCE})...")
 start_time = time.time()
 
+best_val_loss = float('inf')
+patience_counter = 0
+best_model_path = os.path.join(MODEL_DIR, 'cnn_clothing_best.pth')
+
 for epoch in range(EPOCHS):
+    # --- Training phase ---
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
-    
+
     for inputs, labels in train_loader:
         inputs, labels = inputs.to(device), labels.to(device)
-        
+
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        
+
         running_loss += loss.item() * inputs.size(0)
         _, predicted = outputs.max(1)
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
-        
-    epoch_loss = running_loss / total
-    epoch_acc = 100. * correct / total
-    print(f"  Epoch {epoch+1}/{EPOCHS} -> Loss: {epoch_loss:.4f} | Accuracy: {epoch_acc:.2f}%")
+
+    train_loss = running_loss / total
+    train_acc = 100. * correct / total
+
+    # --- Validation phase ---
+    model.eval()
+    val_loss = 0.0
+    val_correct = 0
+    val_total = 0
+
+    with torch.no_grad():
+        for inputs, labels in val_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            val_loss += loss.item() * inputs.size(0)
+            _, predicted = outputs.max(1)
+            val_total += labels.size(0)
+            val_correct += predicted.eq(labels).sum().item()
+
+    val_loss /= val_total
+    val_acc = 100. * val_correct / val_total
+
+    # Update LR scheduler based on validation loss
+    scheduler.step(val_loss)
+
+    print(f"  Epoch {epoch+1}/{EPOCHS} -> Train Loss: {train_loss:.4f} Acc: {train_acc:.1f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.1f}%")
+
+    # Early stopping check
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        patience_counter = 0
+        torch.save(model.state_dict(), best_model_path)
+    else:
+        patience_counter += 1
+        if patience_counter >= PATIENCE:
+            print(f"  ⚡ Early stopping at epoch {epoch+1} (no improvement for {PATIENCE} epochs)")
+            break
 
 print(f"✅ Training completed in {(time.time() - start_time):.1f} seconds")
+
+# Load best model for evaluation
+model.load_state_dict(torch.load(best_model_path, weights_only=True))
 
 # 4. Evaluation
 print("\n📊 Evaluating model on test set...")
@@ -153,10 +236,11 @@ cm_path = os.path.join(OUTPUT_DIR, 'cnn_confusion_matrix.png')
 plt.savefig(cm_path)
 print(f"📈 Confusion matrix saved to: {cm_path}")
 
-# Save Model
+# Save Model (best model was already saved during training via early stopping)
 model_path = os.path.join(MODEL_DIR, 'cnn_clothing.pth')
 torch.save(model.state_dict(), model_path)
-print(f"💾 Model weights saved to: {model_path}")
+print(f"💾 Best model weights saved to: {best_model_path}")
+print(f"💾 Final model weights saved to: {model_path}")
 print("=" * 60)
 print("  DAY 10 COMPLETED SUCCESSFULLY!")
 print("=" * 60)

@@ -102,6 +102,11 @@ with engine.connect() as conn:
         count = conn.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar()
         print(f'  📋 {table}: {count:,} rows')
 
+# Re-enable FK checks (were disabled at start for clean loading)
+with engine.connect() as conn:
+    conn.execute(text('SET FOREIGN_KEY_CHECKS = 1'))
+    conn.commit()
+
 print('\n✅ Step 1 Complete!')
 print('👉 Next: Run the preprocessing pipeline:')
 print('   1. python scripts/run_all_sql.py')

@@ -42,10 +42,15 @@ df = pd.read_sql("""
     FROM Fact_Orders fo
     JOIN Dim_Product dp ON fo.ProductID = dp.ProductID
     WHERE fo.Quantity > 0
+      AND fo.InvoiceNo IN (
+          SELECT InvoiceNo FROM Fact_Orders
+          GROUP BY InvoiceNo
+          HAVING COUNT(DISTINCT ProductID) >= 2
+      )
 """, engine)
 
 print(f'   Total transaction rows: {len(df):,}')
-print(f'   Unique invoices: {df["InvoiceNo"].nunique():,}')
+print(f'   Unique invoices (multi-item only): {df["InvoiceNo"].nunique():,}')
 print(f'   Unique products: {df["ProductName"].nunique():,}')
 
 # ============================================================
@@ -67,8 +72,8 @@ print('\n3. Creating basket matrix (Invoice x Product)...')
 # One-hot encode: each row = invoice, each column = product (1 = bought, 0 = not)
 basket = df_filtered.groupby(['InvoiceNo', 'ProductName'])['ProductName'].count().unstack().fillna(0)
 
-# Convert to binary (bought or not bought)
-basket = basket.map(lambda x: 1 if x > 0 else 0)
+# Convert to binary (bought or not bought) — vectorized for performance
+basket = (basket > 0).astype(int)
 
 print(f'   Basket shape: {basket.shape[0]:,} invoices x {basket.shape[1]} products')
 
@@ -85,12 +90,18 @@ print(f'   - Single items: {len(frequent_itemsets[frequent_itemsets["length"] ==
 print(f'   - Pairs: {len(frequent_itemsets[frequent_itemsets["length"] == 2])}')
 print(f'   - Triples: {len(frequent_itemsets[frequent_itemsets["length"] >= 3])}')
 
+# Support distribution diagnostics
+print(f'   Support range: {frequent_itemsets["support"].min():.4f} - {frequent_itemsets["support"].max():.4f}')
+print(f'   Median support: {frequent_itemsets["support"].median():.4f}')
+print(f'   min_support=0.03 means an itemset must appear in >= {int(0.03 * len(basket)):,} of {len(basket):,} invoices')
+
 # ============================================================
 # 5. Generate Association Rules
 # ============================================================
 print('\n5. Generating association rules (min_confidence=0.3)...')
 
-rules = association_rules(frequent_itemsets, metric='confidence', min_threshold=0.3)
+rules = association_rules(frequent_itemsets, metric='confidence', min_threshold=0.3,
+                          num_itemsets=len(basket))
 
 # Sort by lift (strongest rules first)
 rules = rules.sort_values('lift', ascending=False)

@@ -13,6 +13,7 @@ from textblob import TextBlob
 import matplotlib.pyplot as plt
 import os
 import warnings
+import re
 
 warnings.filterwarnings('ignore')
 
@@ -53,6 +54,23 @@ for rating in sorted(df['Rating'].dropna().unique()):
     print(f'     {int(rating)} stars: {count:,} reviews')
 
 # ============================================================
+# 1b. Text Preprocessing
+# ============================================================
+print('\n   Preprocessing review text (cleaning HTML, special chars)...')
+
+def clean_text(text):
+    """Basic text cleaning for sentiment analysis."""
+    text = str(text)
+    text = re.sub(r'<[^>]+>', '', text)           # Remove HTML tags
+    text = re.sub(r'http\S+|www\S+', '', text)    # Remove URLs
+    text = re.sub(r'[^\w\s.,!?\'-]', '', text)    # Keep useful punctuation
+    text = re.sub(r'\s+', ' ', text).strip()       # Collapse whitespace
+    return text
+
+df['CleanText'] = df['ReviewText'].apply(clean_text)
+print(f'   Preprocessing complete.')
+
+# ============================================================
 # 2. VADER Sentiment Analysis
 # ============================================================
 print('\n2. Running VADER sentiment analysis...')
@@ -60,9 +78,9 @@ print('\n2. Running VADER sentiment analysis...')
 sia = SentimentIntensityAnalyzer()
 
 # VADER returns compound score between -1 (most negative) and +1 (most positive)
-df['VADER_Score'] = df['ReviewText'].apply(lambda x: sia.polarity_scores(str(x))['compound'])
+df['VADER_Score'] = df['CleanText'].apply(lambda x: sia.polarity_scores(x)['compound'])
 
-# Classify sentiment
+# Classify sentiment (threshold ±0.05 is VADER's recommended cutoff)
 df['VADER_Label'] = df['VADER_Score'].apply(
     lambda x: 'Positive' if x >= 0.05 else ('Negative' if x <= -0.05 else 'Neutral')
 )
@@ -79,11 +97,18 @@ for label, count in vader_dist.items():
 print('\n3. Running TextBlob sentiment analysis...')
 
 # TextBlob polarity: -1 (negative) to +1 (positive)
-df['TextBlob_Score'] = df['ReviewText'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
-df['TextBlob_Subjectivity'] = df['ReviewText'].apply(lambda x: TextBlob(str(x)).sentiment.subjectivity)
+# Compute polarity and subjectivity in a SINGLE pass (avoids parsing text twice)
+def textblob_scores(text):
+    blob = TextBlob(text)
+    return blob.sentiment.polarity, blob.sentiment.subjectivity
 
+tb_results = df['CleanText'].apply(textblob_scores)
+df['TextBlob_Score'] = tb_results.apply(lambda x: x[0])
+df['TextBlob_Subjectivity'] = tb_results.apply(lambda x: x[1])
+
+# Use same ±0.05 threshold as VADER for consistency
 df['TextBlob_Label'] = df['TextBlob_Score'].apply(
-    lambda x: 'Positive' if x > 0.1 else ('Negative' if x < -0.1 else 'Neutral')
+    lambda x: 'Positive' if x >= 0.05 else ('Negative' if x <= -0.05 else 'Neutral')
 )
 
 print('   TextBlob Results:')
@@ -97,8 +122,19 @@ for label, count in tb_dist.items():
 # ============================================================
 print('\n4. Computing ensemble sentiment score...')
 
-# Average of VADER and TextBlob for a more robust score
-df['Ensemble_Score'] = (df['VADER_Score'] + df['TextBlob_Score']) / 2
+# Normalize both scores to z-scores so neither dominates the ensemble
+# (VADER tends toward extremes while TextBlob stays near 0)
+vader_mean, vader_std = df['VADER_Score'].mean(), df['VADER_Score'].std()
+tb_mean, tb_std = df['TextBlob_Score'].mean(), df['TextBlob_Score'].std()
+
+df['VADER_Normalized'] = (df['VADER_Score'] - vader_mean) / vader_std
+df['TextBlob_Normalized'] = (df['TextBlob_Score'] - tb_mean) / tb_std
+
+# Ensemble: average of z-score normalized scores, then rescale to [-1, 1]
+df['Ensemble_ZScore'] = (df['VADER_Normalized'] + df['TextBlob_Normalized']) / 2
+# Rescale back to interpretable range using tanh
+df['Ensemble_Score'] = np.tanh(df['Ensemble_ZScore'])
+
 df['Final_Sentiment'] = df['Ensemble_Score'].apply(
     lambda x: 'Positive' if x > 0.05 else ('Negative' if x < -0.05 else 'Neutral')
 )
@@ -115,18 +151,20 @@ for label, count in final_dist.items():
 print('\n5. Updating Fact_Reviews in database with sentiment scores...')
 
 with engine.connect() as conn:
-    # Update in batches for performance
-    batch_size = 1000
-    total = len(df)
-    for i in range(0, total, batch_size):
-        batch = df.iloc[i:i+batch_size]
-        for _, row in batch.iterrows():
-            conn.execute(text(
-                "UPDATE Fact_Reviews SET SentimentScore = :score WHERE ReviewID = :rid"
-            ), {'score': float(row['Ensemble_Score']), 'rid': int(row['ReviewID'])})
+    # Bulk update using executemany for performance (vs row-by-row)
+    update_data = [
+        {'score': float(row['Ensemble_Score']), 'rid': int(row['ReviewID'])}
+        for _, row in df.iterrows()
+    ]
+    batch_size = 5000
+    for i in range(0, len(update_data), batch_size):
+        batch = update_data[i:i+batch_size]
+        conn.execute(
+            text("UPDATE Fact_Reviews SET SentimentScore = :score WHERE ReviewID = :rid"),
+            batch
+        )
         conn.commit()
-        if (i + batch_size) % 5000 == 0 or i + batch_size >= total:
-            print(f'   Updated {min(i + batch_size, total):,}/{total:,} rows...')
+        print(f'   Updated {min(i + batch_size, len(update_data)):,}/{len(update_data):,} rows...')
 
 print('   Database updated successfully!')
 
