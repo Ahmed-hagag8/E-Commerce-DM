@@ -1,9 +1,3 @@
-"""
-Day 12: Streamlit Dashboard - E-Commerce Data Warehouse
-Interactive dashboard showcasing all ML results and data insights.
-
-Run: streamlit run scripts/09_dashboard.py
-"""
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,9 +8,6 @@ from sqlalchemy import create_engine, text
 from pathlib import Path
 import os
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
 st.set_page_config(
     page_title="Customer Behavior Analysis And Hybrid Recommendation System",
     page_icon="🛒",
@@ -24,9 +15,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ============================================================
-# CUSTOM CSS
-# ============================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -83,9 +71,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
 @st.cache_resource
 def get_engine():
     return create_engine('mysql+pymysql://root:root@localhost:3306/ecommerce_dm')
@@ -98,9 +83,6 @@ def load_data(query):
 BASE = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE / 'data' / 'generated'
 
-# ============================================================
-# SIDEBAR
-# ============================================================
 with st.sidebar:
     st.markdown("# Customer Behavior Analysis And Hybrid Recommendation System")
     st.markdown("---")
@@ -126,9 +108,6 @@ with st.sidebar:
     except:
         st.warning("Database not connected")
 
-# ============================================================
-# HELPER: Metric Cards
-# ============================================================
 def metric_card(label, value, color=""):
     st.markdown(f"""
     <div class="metric-card">
@@ -137,13 +116,9 @@ def metric_card(label, value, color=""):
     </div>
     """, unsafe_allow_html=True)
 
-# ============================================================
-# PAGE: OVERVIEW
-# ============================================================
 if page == "📊 Overview":
     st.markdown("# 🏪 Customer Behavior Analysis And Hybrid Recommendation System")
 
-    # Key Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
     try:
         customers = load_data("SELECT COUNT(*) as c FROM Dim_Customer").iloc[0, 0]
@@ -162,7 +137,6 @@ if page == "📊 Overview":
 
     st.markdown("")
 
-    # Revenue Over Time
     col1, col2 = st.columns(2)
 
     with col1:
@@ -218,7 +192,6 @@ if page == "📊 Overview":
         except Exception as e:
             st.error(f"Error: {e}")
 
-    # Pipeline Architecture
     st.markdown('<div class="section-header">🏗️ Pipeline Architecture (Medallion)</div>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -231,9 +204,6 @@ if page == "📊 Overview":
         st.markdown("### 🥇 Gold (Star Schema)")
         st.markdown("- `Dim_Customer` + `Dim_Product`\n- `Dim_Time` + `Dim_Location`\n- `Fact_Orders` + `Fact_Reviews`")
 
-# ============================================================
-# PAGE: CUSTOMER ANALYSIS
-# ============================================================
 elif page == "👥 Customer Analysis":
     st.markdown("# 👥 Customer Analysis & RFM Segmentation")
 
@@ -269,7 +239,6 @@ elif page == "👥 Customer Analysis":
             fig.update_layout(template='plotly_dark', height=300, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
-        # Top Customers Table
         st.markdown('<div class="section-header">🏆 Top 10 Customers by Revenue</div>', unsafe_allow_html=True)
         top_cust = customers.nlargest(10, 'Monetary')[['CustomerID', 'Country', 'Recency', 'Frequency', 'Monetary', 'AvgOrderValue', 'ChurnLabel']]
         top_cust['ChurnLabel'] = top_cust['ChurnLabel'].map({0: '✅ Active', 1: '❌ Churned'})
@@ -278,9 +247,6 @@ elif page == "👥 Customer Analysis":
     except Exception as e:
         st.error(f"Error loading customer data: {e}")
 
-# ============================================================
-# PAGE: PRODUCT ANALYSIS
-# ============================================================
 elif page == "📦 Product Analysis":
     st.markdown("# 📦 Product & Category Analysis")
 
@@ -316,9 +282,6 @@ elif page == "📦 Product Analysis":
     except Exception as e:
         st.error(f"Error: {e}")
 
-# ============================================================
-# PAGE: SENTIMENT ANALYSIS
-# ============================================================
 elif page == "💬 Sentiment Analysis":
     st.markdown("# 💬 Sentiment Analysis (NLP)")
 
@@ -363,7 +326,6 @@ elif page == "💬 Sentiment Analysis":
                               yaxis_title='Avg Sentiment', margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
-        # Sentiment by CNN Category
         st.markdown('<div class="section-header">👗 Sentiment by Clothing Category (CNN Integration)</div>', unsafe_allow_html=True)
         cat_sent = reviews.groupby('CNN_Matched_Class').agg(
             Avg_Sentiment=('SentimentScore', 'mean'),
@@ -381,9 +343,6 @@ elif page == "💬 Sentiment Analysis":
     except Exception as e:
         st.error(f"Error: {e}")
 
-# ============================================================
-# PAGE: ASSOCIATION RULES
-# ============================================================
 elif page == "🔗 Association Rules":
     st.markdown("# 🔗 Association Rules (Market Basket Analysis)")
 
@@ -417,7 +376,6 @@ elif page == "🔗 Association Rules":
                 fig.update_layout(template='plotly_dark', height=400, margin=dict(l=20, r=20, t=30, b=20))
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Rules Table
             st.markdown('<div class="section-header">📋 All Association Rules</div>', unsafe_allow_html=True)
             display_rules = rules.copy()
             display_rules['Confidence'] = display_rules['Confidence'].apply(lambda x: f"{x:.1%}")
@@ -429,9 +387,6 @@ elif page == "🔗 Association Rules":
     except Exception as e:
         st.error(f"Error: {e}")
 
-# ============================================================
-# PAGE: CHURN PREDICTION
-# ============================================================
 elif page == "🤖 Churn Prediction":
     st.markdown("# 🤖 Churn Prediction (Supervised ML)")
 
@@ -449,7 +404,6 @@ elif page == "🤖 Churn Prediction":
 
             st.markdown("")
 
-            # Model Comparison Chart
             st.markdown('<div class="section-header">📊 Model Performance Comparison</div>', unsafe_allow_html=True)
             metrics_to_plot = ['Accuracy', 'Precision', 'Recall', 'F1_Score', 'AUC']
             fig = go.Figure()
@@ -461,12 +415,10 @@ elif page == "🤖 Churn Prediction":
                               yaxis_range=[0, 1.0], margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
-            # Comparison Table
             st.markdown('<div class="section-header">📋 Detailed Comparison</div>', unsafe_allow_html=True)
             st.dataframe(comparison.style.highlight_max(subset=['Accuracy', 'Precision', 'Recall', 'F1_Score', 'AUC'],
                                                          color='#2d6a4f'), use_container_width=True, hide_index=True)
 
-            # Charts image
             chart_img = DATA_DIR / 'churn_prediction_charts.png'
             if chart_img.exists():
                 st.markdown('<div class="section-header">📈 Evaluation Charts</div>', unsafe_allow_html=True)
@@ -476,15 +428,11 @@ elif page == "🤖 Churn Prediction":
     except Exception as e:
         st.error(f"Error: {e}")
 
-# ============================================================
-# PAGE: RECOMMENDATION ENGINE
-# ============================================================
 elif page == "🎯 Recommendation Engine":
     st.markdown("# 🎯 Hybrid Recommendation Engine")
     st.markdown("*Combining Collaborative Filtering (60%) + Content-Based Filtering (40%)*")
 
     try:
-        # Category Profiles
         profile_path = DATA_DIR / 'category_content_profiles.csv'
         if profile_path.exists():
             profiles = pd.read_csv(profile_path)
@@ -516,7 +464,6 @@ elif page == "🎯 Recommendation Engine":
                 fig.update_layout(template='plotly_dark', height=400, margin=dict(l=20, r=20, t=30, b=20))
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Architecture Explanation
             st.markdown('<div class="section-header">🏗️ How It Works</div>', unsafe_allow_html=True)
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -541,7 +488,6 @@ elif page == "🎯 Recommendation Engine":
                 - Multi-modal: Images + Text + Purchases
                 """)
 
-            # Recommendation Chart Image
             chart_img = DATA_DIR / 'recommendation_engine_charts.png'
             if chart_img.exists():
                 st.markdown('<div class="section-header">📈 System Analysis</div>', unsafe_allow_html=True)

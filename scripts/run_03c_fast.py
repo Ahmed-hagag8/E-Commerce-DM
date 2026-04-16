@@ -1,7 +1,3 @@
-"""
-Step 3C — FAST version with index optimization
-Run: python scripts/run_03c_fast.py
-"""
 from sqlalchemy import create_engine, text
 import time
 
@@ -9,9 +5,8 @@ engine = create_engine('mysql+pymysql://root:root@localhost:3306/ecommerce_dm')
 
 print('='*60)
 print('  Step 3C — FAST version')
-print('='*60)
+print('=' * 60)
 
-# Step 0: Add a DATE index to clean_retail for fast JOINs
 print('\n⏳ Adding date index to clean_retail...')
 with engine.connect() as conn:
     try:
@@ -27,15 +22,13 @@ with engine.connect() as conn:
         else:
             print(f'  ⚠️ Index creation skipped: {str(e)[:100]}')
 
-# Also add index on Dim_Time.FullDate
 with engine.connect() as conn:
     try:
         conn.execute(text('CREATE INDEX idx_dt_fulldate ON Dim_Time(FullDate)'))
         conn.commit()
     except Exception as e:
-        conn.rollback()  # Index may already exist
+        conn.rollback()
 
-# Step 1: Fact_Orders
 print('\n⏳ Creating Fact_Orders...')
 with engine.connect() as conn:
     conn.execute(text('DROP TABLE IF EXISTS Fact_Orders'))
@@ -81,7 +74,6 @@ with engine.connect() as conn:
     conn.commit()
     print(f'  ✅ Fact_Orders: {result.rowcount:,} rows ({time.time()-start:.1f}s)')
 
-# Step 2: Fact_Reviews
 print('\n⏳ Creating Fact_Reviews...')
 with engine.connect() as conn:
     conn.execute(text('DROP TABLE IF EXISTS Fact_Reviews'))
@@ -116,7 +108,6 @@ with engine.connect() as conn:
     conn.commit()
     print(f'  ✅ Fact_Reviews: {result.rowcount:,} rows ({time.time()-start:.1f}s)')
 
-# Step 3: Final dataset
 print('\n⏳ Creating final_customer_dataset...')
 with engine.connect() as conn:
     conn.execute(text('DROP TABLE IF EXISTS final_customer_dataset'))
@@ -156,7 +147,6 @@ with engine.connect() as conn:
     """))
     conn.commit()
 
-    # ETL Validation
     nulls = conn.execute(text("""
         SELECT 
             SUM(CASE WHEN TotalItems IS NULL THEN 1 ELSE 0 END) AS null_items,
@@ -171,7 +161,6 @@ with engine.connect() as conn:
     print(f'  📋 Row Integrity: Expected={expected:,}, Actual={actual:,} → {status}')
     print(f'  ✅ Final dataset created ({time.time()-start:.1f}s)')
 
-# Summary
 print('\n' + '='*60)
 print('  DATA WAREHOUSE COMPLETE!')
 print('='*60)

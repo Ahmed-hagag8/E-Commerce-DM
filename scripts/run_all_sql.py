@@ -1,7 +1,3 @@
-"""
-Run ALL SQL scripts via PyMySQL multi-statement mode
-Run: python scripts/run_all_sql.py
-"""
 import pymysql
 from pymysql.constants import CLIENT
 import time
@@ -33,7 +29,6 @@ for f in sql_files:
     
     sql = filepath.read_text(encoding='utf-8')
     
-    # Connect with MULTI_STATEMENTS flag — runs entire SQL file at once
     conn = pymysql.connect(
         host=DB_HOST, port=DB_PORT,
         user=DB_USER, password=DB_PASS,
@@ -48,7 +43,6 @@ for f in sql_files:
         cursor = conn.cursor()
         cursor.execute(sql)
         
-        # Fetch all result sets (from SELECT statements)
         results = []
         while True:
             try:
@@ -58,7 +52,7 @@ for f in sql_files:
                     for row in rows:
                         results.append(dict(zip(cols, row)))
             except Exception:
-                pass  # DDL statements (CREATE/DROP/ALTER) don't return result sets
+                pass
             if not cursor.nextset():
                 break
         
@@ -66,7 +60,6 @@ for f in sql_files:
         elapsed = time.time() - start
         print(f'  ✅ Done ({elapsed:.1f}s)')
         
-        # Show results
         for r in results:
             print(f'  → {r}')
             

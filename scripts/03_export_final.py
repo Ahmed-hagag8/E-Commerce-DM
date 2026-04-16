@@ -1,15 +1,7 @@
-"""
-Step 4: Export Final Dataset from MySQL to CSV
-Run this AFTER executing SQL scripts in phpMyAdmin.
-The exported CSV is the ONLY file used for ML in Python.
-
-Run: python scripts/03_export_final.py
-"""
 import pandas as pd
 from pathlib import Path
 from sqlalchemy import create_engine, text
 
-# Config
 DB_USER = 'root'
 DB_PASS = 'root'
 DB_HOST = 'localhost'
@@ -28,18 +20,12 @@ print('=' * 60)
 
 engine = create_engine(f'mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}')
 
-# ============================================================
-# 1. Export final_customer_dataset (THE generated dataset)
-# ============================================================
 print('\n📤 Exporting final_customer_dataset...')
 df_final = pd.read_sql('SELECT * FROM final_customer_dataset', engine)
 df_final.to_csv(DATA_GENERATED / 'customer_features.csv', index=False)
 print(f'  ✅ {df_final.shape[0]} rows × {df_final.shape[1]} columns')
 print(f'  → data/generated/customer_features.csv')
 
-# ============================================================
-# 2. Export clean tables (for reference)
-# ============================================================
 print('\n📤 Exporting clean tables...')
 
 df_retail = pd.read_sql('SELECT * FROM clean_retail', engine)
@@ -54,9 +40,6 @@ df_amazon = pd.read_sql('SELECT * FROM clean_amazon', engine)
 df_amazon.to_csv(DATA_PROCESSED / 'amazon_clean.csv', index=False)
 print(f'  ✅ clean_amazon: {len(df_amazon):,} rows → data/processed/amazon_clean.csv')
 
-# ============================================================
-# 3. Print Data Warehouse Summary
-# ============================================================
 print('\n' + '=' * 60)
 print('  DATA WAREHOUSE SUMMARY')
 print('=' * 60)
