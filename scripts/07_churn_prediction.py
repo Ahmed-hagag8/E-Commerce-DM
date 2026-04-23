@@ -75,12 +75,23 @@ print('\n2. Preparing data for ML...')
 
 df = df.dropna(subset=['ChurnLabel'])
 
-df['OrdersPerLifespan'] = df['Frequency'] / (df['CustomerLifespanDays'] + 1)
-df['AvgDaysBetweenOrders'] = (df['CustomerLifespanDays'] + 1) / (df['Frequency'] + 1)
 df['MonetaryPerProduct'] = df['Monetary'] / (df['UniqueProducts'] + 1)
 df['HighValue'] = (df['Monetary'] > df['Monetary'].median()).astype(int)
 df['IsOneTimeBuyer'] = (df['Frequency'] == 1).astype(int)
 df['LowSpender'] = (df['Monetary'] < df['Monetary'].quantile(0.25)).astype(int)
+
+df['OrdersPerLifespan'] = df['Frequency'] / (df['CustomerLifespanDays'] + 1)
+df['AvgDaysBetweenOrders'] = (df['CustomerLifespanDays'] + 1) / (df['Frequency'] + 1)
+df['MonetaryPerLifespan'] = df['Monetary'] / (df['CustomerLifespanDays'] + 1)
+df['LogLifespan'] = np.log1p(df['CustomerLifespanDays'])
+
+df['LogMonetary'] = np.log1p(df['Monetary'])
+df['LogFrequency'] = np.log1p(df['Frequency'])
+df['MonetaryFrequencyRatio'] = df['Monetary'] / (df['Frequency'] + 1)
+df['FrequencyPerProduct'] = df['Frequency'] / (df['UniqueProducts'] + 1)
+df['FrequencySquared'] = df['Frequency'] ** 2
+df['HighFrequencyHighValue'] = ((df['Frequency'] > df['Frequency'].median()) & (df['Monetary'] > df['Monetary'].median())).astype(int)
+df['SpendingConsistency'] = df['SpendingStdDev'] / (df['Monetary'] / (df['Frequency'] + 1) + 1)
 
 outlier_cols = ['Monetary', 'Frequency', 'UniqueProducts', 'AvgPricePerItem']
 for col in outlier_cols:
@@ -121,60 +132,63 @@ X_train, X_val, y_train, y_val = train_test_split(
     X_train_full, y_train_full, test_size=0.15, random_state=42, stratify=y_train_full
 )
 
-print('\n   Applying SMOTE oversampling to balance training data...')
-smote = SMOTE(random_state=42)
-X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
-print(f'   Before SMOTE: {len(X_train):,} samples | After SMOTE: {len(X_train_smote):,} samples')
-print(f'   Class balance after SMOTE: Active={sum(y_train_smote==0):,}, Churned={sum(y_train_smote==1):,}')
+print('\n   Class balance is near 50/50 — skipping SMOTE, using class_weight instead...')
+print(f'   Train: Active={sum(y_train==0):,}, Churned={sum(y_train==1):,}')
 
 scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train_smote)
+X_train_scaled = scaler.fit_transform(X_train)
 X_val_scaled = scaler.transform(X_val)
 X_test_scaled = scaler.transform(X_test)
 
-print(f'   Train set: {len(X_train_smote):,} | Validation set: {len(X_val):,} | Test set: {len(X_test):,}')
+print(f'   Train set: {len(X_train):,} | Validation set: {len(X_val):,} | Test set: {len(X_test):,}')
 
 print('\n3. Hyperparameter tuning & training 5 ML models...')
 
 print('\n   🔧 Tuning Random Forest...')
 rf_params = {
-    'n_estimators': [50, 100, 200, 300],
-    'max_depth': [5, 10, 15, 20, None],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4]
+    'n_estimators': [100, 200, 300, 500],
+    'max_depth': [8, 12, 16, 20, 25, None],
+    'min_samples_split': [2, 3, 5, 8],
+    'min_samples_leaf': [1, 2, 3],
+    'max_features': ['sqrt', 'log2', 0.5, 0.7]
 }
 rf_search = RandomizedSearchCV(
-    RandomForestClassifier(random_state=42, n_jobs=-1),
-    rf_params, n_iter=20, cv=5, scoring='f1', random_state=42, n_jobs=-1
+    RandomForestClassifier(random_state=42, n_jobs=-1, class_weight='balanced'),
+    rf_params, n_iter=30, cv=5, scoring='accuracy', random_state=42, n_jobs=-1
 )
-rf_search.fit(X_train_scaled, y_train_smote)
+rf_search.fit(X_train_scaled, y_train)
 print(f'     Best RF params: {rf_search.best_params_}')
-print(f'     Best RF CV F1: {rf_search.best_score_:.4f}')
+print(f'     Best RF CV Accuracy: {rf_search.best_score_:.4f}')
 
 print('\n   🔧 Tuning XGBoost...')
 xgb_params = {
-    'n_estimators': [50, 100, 200, 300],
-    'max_depth': [3, 5, 7, 9],
-    'learning_rate': [0.01, 0.05, 0.1, 0.2],
-    'subsample': [0.7, 0.8, 0.9, 1.0],
-    'colsample_bytree': [0.7, 0.8, 0.9, 1.0]
+    'n_estimators': [100, 200, 300, 500],
+    'max_depth': [4, 6, 8, 10],
+    'learning_rate': [0.01, 0.03, 0.05, 0.1],
+    'subsample': [0.7, 0.8, 0.9],
+    'colsample_bytree': [0.6, 0.7, 0.8, 0.9],
+    'reg_alpha': [0, 0.1, 0.5, 1.0],
+    'reg_lambda': [1.0, 1.5, 2.0],
+    'min_child_weight': [1, 3, 5]
 }
 xgb_search = RandomizedSearchCV(
     XGBClassifier(random_state=42, use_label_encoder=False, eval_metric='logloss'),
-    xgb_params, n_iter=20, cv=5, scoring='f1', random_state=42, n_jobs=-1
+    xgb_params, n_iter=30, cv=5, scoring='accuracy', random_state=42, n_jobs=-1
 )
-xgb_search.fit(X_train_scaled, y_train_smote)
+xgb_search.fit(X_train_scaled, y_train)
 print(f'     Best XGB params: {xgb_search.best_params_}')
-print(f'     Best XGB CV F1: {xgb_search.best_score_:.4f}')
+print(f'     Best XGB CV Accuracy: {xgb_search.best_score_:.4f}')
 
 models = {
-    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42, C=0.5),
+    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42, C=1.0, class_weight='balanced'),
     'Random Forest': rf_search.best_estimator_,
     'XGBoost': xgb_search.best_estimator_,
-    'SVM': SVC(kernel='rbf', probability=True, random_state=42, C=1.0, gamma='scale'),
-    'MLP Neural Network': MLPClassifier(hidden_layer_sizes=(128, 64, 32), max_iter=500,
+    'Gradient Boosting': GradientBoostingClassifier(n_estimators=500, max_depth=4, learning_rate=0.03,
+                                                     subsample=0.8, min_samples_leaf=5, random_state=42),
+    'SVM': SVC(kernel='rbf', probability=True, random_state=42, C=2.0, gamma='scale', class_weight='balanced'),
+    'MLP Neural Network': MLPClassifier(hidden_layer_sizes=(256, 128, 64), max_iter=800,
                                          random_state=42, early_stopping=True,
-                                         learning_rate='adaptive')
+                                         learning_rate='adaptive', alpha=0.001)
 }
 
 results = {}
@@ -183,7 +197,7 @@ for name, model in models.items():
     start = time.time()
     print(f'\n   Training {name}...')
 
-    model.fit(X_train_scaled, y_train_smote)
+    model.fit(X_train_scaled, y_train)
     y_pred = model.predict(X_test_scaled)
     y_proba = model.predict_proba(X_test_scaled)[:, 1]
     y_proba_val = model.predict_proba(X_val_scaled)[:, 1]
@@ -211,21 +225,16 @@ for name, model in models.items():
 
     print(f'     Accuracy: {acc:.4f} | F1: {f1:.4f} | AUC: {auc:.4f} | Time: {elapsed:.1f}s')
 
-print('\n   Training Voting Ensemble (XGB + RF + MLP)...')
+print('\n   Training Weighted Voting Ensemble (All 6 Models)...')
 start = time.time()
 
-y_proba_ensemble = (
-    results['XGBoost']['y_proba'] +
-    results['Random Forest']['y_proba'] +
-    results['MLP Neural Network']['y_proba']
-) / 3.0
-y_pred_ensemble = (y_proba_ensemble >= 0.5).astype(int)
+weights = {'Gradient Boosting': 2.0, 'XGBoost': 2.0, 'MLP Neural Network': 1.5,
+           'Random Forest': 1.0, 'SVM': 1.0, 'Logistic Regression': 0.5}
+total_w = sum(weights.values())
 
-y_proba_ensemble_val = (
-    results['XGBoost']['y_proba_val'] +
-    results['Random Forest']['y_proba_val'] +
-    results['MLP Neural Network']['y_proba_val']
-) / 3.0
+y_proba_ensemble = sum(results[m]['y_proba'] * w for m, w in weights.items()) / total_w
+y_pred_ensemble = (y_proba_ensemble >= 0.5).astype(int)
+y_proba_ensemble_val = sum(results[m]['y_proba_val'] * w for m, w in weights.items()) / total_w
 
 elapsed = time.time() - start
 acc = accuracy_score(y_test, y_pred_ensemble)
@@ -244,20 +253,22 @@ results['Voting Ensemble'] = {
 }
 print(f'     Accuracy: {acc:.4f} | F1: {f1:.4f} | AUC: {auc:.4f} | Time: {elapsed:.1f}s')
 
-print('\n   Training Stacking Ensemble (XGB, RF -> Meta: Logistic Regression)...')
+print('\n   Training Stacking Ensemble (All Models -> Meta: Logistic Regression)...')
 start = time.time()
 estimators = [
     ('xgb', results['XGBoost']['model']),
     ('rf', results['Random Forest']['model']),
-    ('mlp', results['MLP Neural Network']['model'])
+    ('mlp', results['MLP Neural Network']['model']),
+    ('gb', results['Gradient Boosting']['model']),
+    ('svm', results['SVM']['model'])
 ]
 stacking = StackingClassifier(
     estimators=estimators,
-    final_estimator=LogisticRegression(random_state=42, C=0.5, max_iter=1000),
-    cv=3,
+    final_estimator=LogisticRegression(random_state=42, C=1.0, max_iter=1000),
+    cv=5,
     n_jobs=-1
 )
-stacking.fit(X_train_scaled, y_train_smote)
+stacking.fit(X_train_scaled, y_train)
 y_pred_stack = stacking.predict(X_test_scaled)
 y_proba_stack = stacking.predict_proba(X_test_scaled)[:, 1]
 y_proba_stack_val = stacking.predict_proba(X_val_scaled)[:, 1]
@@ -278,16 +289,16 @@ results['Stacking Ensemble'] = {
 }
 print(f'     Accuracy: {acc:.4f} | F1: {f1:.4f} | AUC: {auc:.4f} | Time: {elapsed_stack:.1f}s')
 
-print('\n   Tuning decision thresholds on validation set to maximize F1-score...')
+print('\n   Tuning decision thresholds on validation set to maximize Accuracy...')
 for name in list(results.keys()):
-    best_f1_thr = 0
+    best_acc_thr = 0
     best_thr = 0.5
     y_p_val = results[name]['y_proba_val']
-    for thr in np.arange(0.3, 0.7, 0.05):
+    for thr in np.arange(0.30, 0.70, 0.005):
         y_pred_thr = (y_p_val >= thr).astype(int)
-        f1_thr = f1_score(y_val, y_pred_thr)
-        if f1_thr > best_f1_thr:
-            best_f1_thr = f1_thr
+        acc_thr = accuracy_score(y_val, y_pred_thr)
+        if acc_thr > best_acc_thr:
+            best_acc_thr = acc_thr
             best_thr = thr
 
     y_pred_test = (results[name]['y_proba'] >= best_thr).astype(int)
