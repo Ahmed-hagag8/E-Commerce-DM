@@ -36,9 +36,7 @@ df_reviews = pd.read_sql('SELECT * FROM clean_reviews', engine)
 df_reviews.to_csv(DATA_PROCESSED / 'reviews_clean.csv', index=False)
 print(f'  ✅ clean_reviews: {len(df_reviews):,} rows → data/processed/reviews_clean.csv')
 
-df_amazon = pd.read_sql('SELECT * FROM clean_amazon', engine)
-df_amazon.to_csv(DATA_PROCESSED / 'amazon_clean.csv', index=False)
-print(f'  ✅ clean_amazon: {len(df_amazon):,} rows → data/processed/amazon_clean.csv')
+
 
 print('\n' + '=' * 60)
 print('  DATA WAREHOUSE SUMMARY')

@@ -13,7 +13,7 @@ SQL_DIR = Path(__file__).resolve().parent.parent / 'sql'
 
 sql_files = [
     '02a_clean_retail.sql',
-    '02b_clean_reviews_amazon.sql',
+    '02b_clean_reviews.sql',
     '03a_dimensions.sql',
     '03b_rfm_customer.sql',
 ]

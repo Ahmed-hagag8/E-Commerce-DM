@@ -172,7 +172,7 @@ xgb_params = {
     'min_child_weight': [1, 3, 5]
 }
 xgb_search = RandomizedSearchCV(
-    XGBClassifier(random_state=42, use_label_encoder=False, eval_metric='logloss'),
+    XGBClassifier(random_state=42, eval_metric='logloss'),
     xgb_params, n_iter=30, cv=5, scoring='accuracy', random_state=42, n_jobs=-1
 )
 xgb_search.fit(X_train_scaled, y_train)

@@ -81,15 +81,6 @@ df_reviews = pd.read_csv(reviews_path)
 df_reviews.to_sql('staging_reviews', engine, if_exists='replace', index=False)
 print(f'  ✅ staging_reviews: {len(df_reviews):,} rows loaded')
 
-# ============================================================
-# 3. Load Amazon Products → staging_amazon
-# ============================================================
-print('\n📥 Loading Amazon Products...')
-amazon_path = DATA_RAW / 'amazon_products' / 'Amazon-Products.csv'
-df_amazon = pd.read_csv(amazon_path)
-df_amazon.to_sql('staging_amazon', engine, if_exists='replace', index=False,
-                  chunksize=5000)
-print(f'  ✅ staging_amazon: {len(df_amazon):,} rows loaded')
 
 # ============================================================
 # Verify
@@ -98,7 +89,7 @@ print('\n' + '=' * 60)
 print('  STAGING TABLES LOADED')
 print('=' * 60)
 with engine.connect() as conn:
-    for table in ['staging_retail', 'staging_reviews', 'staging_amazon']:
+    for table in ['staging_retail', 'staging_reviews']:
         count = conn.execute(text(f'SELECT COUNT(*) FROM {table}')).scalar()
         print(f'  📋 {table}: {count:,} rows')
 

@@ -1,5 +1,5 @@
 -- ============================================================
--- Step 2B: Clean Reviews + Amazon
+-- Step 2B: Clean Reviews
 -- Run this SECOND in phpMyAdmin
 -- ============================================================
 
@@ -56,61 +56,7 @@ UPDATE clean_reviews SET
 
 SELECT 'REVIEWS CLEAN DONE' AS Step, COUNT(*) AS total_rows FROM clean_reviews;
 
--- ============================================================
--- CLEAN AMAZON
--- ============================================================
-DROP TABLE IF EXISTS clean_amazon;
-CREATE TABLE clean_amazon AS
-SELECT * FROM staging_amazon;
 
-SET @col_exists = (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='ecommerce_dm' AND table_name='clean_amazon' AND column_name='Unnamed: 0');
-SET @sql = IF(@col_exists > 0, 'ALTER TABLE clean_amazon DROP COLUMN `Unnamed: 0`', 'SELECT 1');
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
--- Delete rows with no product name
-DELETE FROM clean_amazon WHERE name IS NULL OR TRIM(name) = '';
-
--- Add clean price columns
-ALTER TABLE clean_amazon 
-    ADD COLUMN clean_discount_price DECIMAL(12,2),
-    ADD COLUMN clean_actual_price DECIMAL(12,2),
-    ADD COLUMN clean_ratings DECIMAL(3,1),
-    ADD COLUMN clean_no_of_ratings INT;
-
--- Clean prices (remove ₹ and commas)
-UPDATE clean_amazon SET
-    clean_discount_price = CAST(
-        REPLACE(REPLACE(REPLACE(discount_price, '₹', ''), ',', ''), ' ', '') 
-        AS DECIMAL(12,2)
-    )
-WHERE discount_price IS NOT NULL AND discount_price != '';
-
-UPDATE clean_amazon SET
-    clean_actual_price = CAST(
-        REPLACE(REPLACE(REPLACE(actual_price, '₹', ''), ',', ''), ' ', '') 
-        AS DECIMAL(12,2)
-    )
-WHERE actual_price IS NOT NULL AND actual_price != '';
-
--- Clean ratings
-UPDATE clean_amazon SET
-    clean_ratings = CAST(SUBSTRING_INDEX(ratings, ' ', 1) AS DECIMAL(3,1))
-WHERE ratings IS NOT NULL AND ratings != '' AND ratings REGEXP '^[0-9]';
-
--- Clean number of ratings
-UPDATE clean_amazon SET
-    clean_no_of_ratings = CAST(CAST(REPLACE(no_of_ratings, ',', '') AS DECIMAL(12,0)) AS UNSIGNED)
-WHERE no_of_ratings IS NOT NULL AND no_of_ratings != '' AND no_of_ratings REGEXP '^[0-9]';
-
--- Fill nulls
-UPDATE clean_amazon SET clean_discount_price = clean_actual_price WHERE clean_discount_price IS NULL;
-UPDATE clean_amazon SET clean_actual_price = clean_discount_price WHERE clean_actual_price IS NULL;
-UPDATE clean_amazon SET clean_ratings = 0 WHERE clean_ratings IS NULL;
-UPDATE clean_amazon SET clean_no_of_ratings = 0 WHERE clean_no_of_ratings IS NULL;
-
-SELECT 'AMAZON CLEAN DONE' AS Step, COUNT(*) AS total_rows FROM clean_amazon;
 
 -- ============================================================
 -- SUMMARY
@@ -118,6 +64,4 @@ SELECT 'AMAZON CLEAN DONE' AS Step, COUNT(*) AS total_rows FROM clean_amazon;
 SELECT 'CLEANING SUMMARY' AS Info;
 SELECT 'clean_retail' AS TableName, COUNT(*) AS TotalRows FROM clean_retail
 UNION ALL
-SELECT 'clean_reviews', COUNT(*) FROM clean_reviews
-UNION ALL
-SELECT 'clean_amazon', COUNT(*) FROM clean_amazon;
+SELECT 'clean_reviews', COUNT(*) FROM clean_reviews;

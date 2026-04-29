@@ -196,10 +196,10 @@ if page == "📊 Overview":
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("### 🥉 Bronze (Raw)")
-        st.markdown("- `staging_retail` (1M+ rows)\n- `staging_reviews` (23K rows)\n- `staging_amazon` (550K rows)")
+        st.markdown("- `staging_retail` (1M+ rows)\n- `staging_reviews` (23K rows)")
     with col2:
         st.markdown("### 🥈 Silver (Cleaned)")
-        st.markdown("- `clean_retail` (779K rows)\n- `clean_reviews` (22K rows)\n- `clean_amazon` (551K rows)")
+        st.markdown("- `clean_retail` (779K rows)\n- `clean_reviews` (22K rows)")
     with col3:
         st.markdown("### 🥇 Gold (Star Schema)")
         st.markdown("- `Dim_Customer` + `Dim_Product`\n- `Dim_Time` + `Dim_Location`\n- `Fact_Orders` + `Fact_Reviews`")
